@@ -1,7 +1,7 @@
 import * as THREE from "./three.module.js";
 import { OrbitControls } from "./OrbitControls.js";
 import { OBJLoader } from "./OBJLoader.js";
-// import { DragControls } from "./DragControls.js";
+import { DragControls } from "./DragControls.js"; // Ensure this is included
 
 // Scene, Camera, and Renderer
 const scene = new THREE.Scene();
@@ -15,6 +15,7 @@ document.body.appendChild(renderer.domElement);
 
 const spotlightColors = [0xffe0b2, 0xff0000, 0x00ff00, 0x0000ff, 0xffff00, 0xff00ff];
 let currentColorIndex = 0;
+
 // Orbit Controls
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
@@ -32,14 +33,87 @@ floor.rotation.x = -Math.PI / 2;
 floor.receiveShadow = true;
 scene.add(floor);
 
-// Studio Backdrop
 const backdropGeometry = new THREE.PlaneGeometry(500, 300);
 const backdropMaterial = new THREE.MeshStandardMaterial({ color: 0xf0f0f0 });
 const backdrop = new THREE.Mesh(backdropGeometry, backdropMaterial);
 backdrop.position.z = -150;
 backdrop.position.y = 150;
 backdrop.receiveShadow = true;
-scene.add(backdrop);
+
+// Option 2: Curved Backdrop
+let curvedBackdrop = createCurvedBackdrop();
+
+// Option 3: Cylindrical Backdrop
+let cylindricalBackdrop = createCylindricalBackdrop();
+
+let currentBackdrop = 0; // 0: Flat, 1: Curved, 2: Cylindrical
+
+function createCurvedBackdrop() {
+  const curvedGeometry = new THREE.PlaneGeometry(500, 500, 50, 50);
+
+  // Access the position attribute of the geometry
+  const position = curvedGeometry.attributes.position;
+
+  // Modify the vertex positions to create a curve
+  for (let i = 0; i < position.count; i++) {
+    const x = position.getX(i);
+    const y = position.getY(i);
+
+    if (y > 0) {
+      position.setZ(i, Math.pow(Math.abs(y), 2) * 0.0025); // Curves up from the floor to the wall
+    }
+    if (Math.abs(x) > 200) {
+      position.setX(i, x * 0.75); // Slightly curve in the sides
+    }
+  }
+
+  // Need to recompute normals after modifying vertex positions
+  curvedGeometry.computeVertexNormals();
+
+  const material = new THREE.MeshStandardMaterial({ color: 0xf0f0f0, side: THREE.DoubleSide });
+  const mesh = new THREE.Mesh(curvedGeometry, material);
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
+function createCylindricalBackdrop() {
+  const geometry = new THREE.CylinderGeometry(500, 500, 300, 50, 1, true);
+  geometry.scale(-1, 1, 1); // Invert the cylinder to be viewed from inside
+  const material = new THREE.MeshStandardMaterial({ color: 0xf0f0f0, side: THREE.DoubleSide });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.rotation.x = Math.PI / 2;
+  mesh.position.y = 150;
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
+function switchBackdrop() {
+  // Remove the current backdrop
+  scene.remove(floor);
+  scene.remove(backdrop);
+  scene.remove(curvedBackdrop);
+  scene.remove(cylindricalBackdrop);
+
+  switch (currentBackdrop) {
+    case 0: // Flat Backdrop
+      scene.add(floor);
+      scene.add(backdrop);
+      break;
+    case 1: // Curved Backdrop
+      //scene.add(floor);
+      scene.add(curvedBackdrop);
+      break;
+    case 2: // Cylindrical Backdrop
+      scene.add(cylindricalBackdrop);
+      break;
+  }
+
+  currentBackdrop = (currentBackdrop + 1) % 3;
+}
+
+// Initialize with the first backdrop
+switchBackdrop();
 
 // Set the target for the lights to point towards the center of the scene
 const target = new THREE.Object3D();
@@ -95,6 +169,92 @@ scene.add(rightSpotLightHelper);
 let model;
 let isRotating = false;
 let materialsVisible = true;
+
+// Light Helpers Toggle
+let helperState = 0; // 0: all on, 1: left only, 2: middle only, 3: right only, 4: all off
+
+function toggleLightHelpers() {
+  switch (helperState) {
+    case 0:
+      mainSpotLightHelper.visible = true;
+      leftSpotLightHelper.visible = true;
+      rightSpotLightHelper.visible = true;
+      break;
+    case 1:
+      mainSpotLightHelper.visible = false;
+      leftSpotLightHelper.visible = true;
+      rightSpotLightHelper.visible = false;
+      break;
+    case 2:
+      mainSpotLightHelper.visible = true;
+      leftSpotLightHelper.visible = false;
+      rightSpotLightHelper.visible = false;
+      break;
+    case 3:
+      mainSpotLightHelper.visible = false;
+      leftSpotLightHelper.visible = false;
+      rightSpotLightHelper.visible = true;
+      break;
+    case 4:
+      mainSpotLightHelper.visible = false;
+      leftSpotLightHelper.visible = false;
+      rightSpotLightHelper.visible = false;
+      break;
+  }
+
+  helperState = (helperState + 1) % 5; // Cycle through the states
+}
+
+const mainLightHandle = new THREE.Mesh(
+  new THREE.SphereGeometry(10, 32, 32),
+  new THREE.MeshBasicMaterial({ color: 0xff0000, opacity: 0, transparent: true })
+);
+mainLightHandle.position.copy(mainSpotLight.position);
+scene.add(mainLightHandle);
+
+const leftLightHandle = new THREE.Mesh(
+  new THREE.SphereGeometry(10, 32, 32),
+  new THREE.MeshBasicMaterial({ color: 0x00ff00, opacity: 0, transparent: true })
+);
+leftLightHandle.position.copy(leftSpotLight.position);
+scene.add(leftLightHandle);
+
+const rightLightHandle = new THREE.Mesh(
+  new THREE.SphereGeometry(10, 32, 32),
+  new THREE.MeshBasicMaterial({ color: 0x0000ff, opacity: 0, transparent: true })
+);
+rightLightHandle.position.copy(rightSpotLight.position);
+scene.add(rightLightHandle);
+
+// Drag Controls for Lights
+const draggableLights = [mainLightHandle, leftLightHandle, rightLightHandle];
+const dragControls = new DragControls(draggableLights, camera, renderer.domElement);
+
+dragControls.addEventListener("hoveron", function (event) {
+  console.log("Hovered on:", event.object);
+});
+
+dragControls.addEventListener("dragstart", function (event) {
+  controls.enabled = false; // Disable OrbitControls while dragging
+});
+
+dragControls.addEventListener("dragend", function (event) {
+  controls.enabled = true; // Re-enable OrbitControls after dragging
+});
+
+dragControls.addEventListener("drag", function (event) {
+  // Update spotlight positions to follow the dragged handles
+  if (event.object === mainLightHandle) {
+    mainSpotLight.position.copy(mainLightHandle.position);
+    mainSpotLightHelper.update();
+  } else if (event.object === leftLightHandle) {
+    leftSpotLight.position.copy(leftLightHandle.position);
+    leftSpotLightHelper.update();
+  } else if (event.object === rightLightHandle) {
+    rightSpotLight.position.copy(rightLightHandle.position);
+    rightSpotLightHelper.update();
+  }
+});
 
 function scaleModel(object) {
   const box = new THREE.Box3().setFromObject(object);
@@ -194,7 +354,7 @@ function handleFileSelect(event) {
     });
 
     model = object;
-    scene.add(model);
+    scene.add(object);
   };
 
   reader.readAsText(file);
@@ -211,16 +371,12 @@ window.addEventListener("keydown", function (event) {
     currentColorIndex = (currentColorIndex + 1) % spotlightColors.length;
 
     if (event.shiftKey) {
-      // Change only the central spotlight
       mainSpotLight.color.setHex(spotlightColors[currentColorIndex]);
     } else if (event.altKey) {
-      // Change only the left spotlight
       leftSpotLight.color.setHex(spotlightColors[currentColorIndex]);
     } else if (event.ctrlKey) {
-      // Change only the right spotlight
       rightSpotLight.color.setHex(spotlightColors[currentColorIndex]);
     } else {
-      // Change all three spotlights
       mainSpotLight.color.setHex(spotlightColors[currentColorIndex]);
       leftSpotLight.color.setHex(spotlightColors[currentColorIndex]);
       rightSpotLight.color.setHex(spotlightColors[currentColorIndex]);
@@ -231,9 +387,17 @@ window.addEventListener("keydown", function (event) {
     toggleMaterials();
   }
 
+  if (event.key === "h" || event.key === "H") {
+    toggleLightHelpers();
+  }
+
   if (event.key === "s" || event.key === "S") {
     shadowsEnabled = !shadowsEnabled;
     toggleShadows(shadowsEnabled);
+  }
+
+  if (event.key === "b" || event.key === "B") {
+    switchBackdrop(); // Toggle backdrop on B press
   }
 });
 
