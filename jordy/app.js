@@ -1,67 +1,120 @@
 import * as THREE from "./three.module.js";
 import { OrbitControls } from "./OrbitControls.js";
-import { OBJLoader } from "./OBJLoader.js"; // Add this line to import the OBJLoader
-// import { MTLLoader } from "./MTLLoader.js"; // Add this line if you need to load materials
+import { OBJLoader } from "./OBJLoader.js";
+// import { DragControls } from "./DragControls.js";
 
 // Scene, Camera, and Renderer
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
+camera.position.set(0, 150, 300);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.appendChild(renderer.domElement);
 
-// Orbit Controls for Panning
+const spotlightColors = [0xffe0b2, 0xff0000, 0x00ff00, 0x0000ff, 0xffff00, 0xff00ff];
+let currentColorIndex = 0;
+// Orbit Controls
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true; // Enable smooth panning
+controls.enableDamping = true;
 controls.dampingFactor = 0.05;
-controls.enableZoom = false; // Disable zooming to keep the camera at a fixed distance
-controls.enableRotate = true; // Enable rotation
-controls.rotateSpeed = 0.1; // Adjust rotate speed
-controls.enablePan = false; // Disable panning (only allow rotation)
+controls.enableZoom = true;
+controls.enableRotate = true;
+controls.rotateSpeed = 0.1;
+controls.enablePan = true;
 
 // Studio Floor
 const floorGeometry = new THREE.PlaneGeometry(500, 500);
-const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x808080 });
+const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x808080, side: THREE.DoubleSide });
 const floor = new THREE.Mesh(floorGeometry, floorMaterial);
-floor.rotation.x = -Math.PI / 2; // Rotate floor to lay flat
+floor.rotation.x = -Math.PI / 2;
+floor.receiveShadow = true;
 scene.add(floor);
 
 // Studio Backdrop
 const backdropGeometry = new THREE.PlaneGeometry(500, 300);
-const backdropMaterial = new THREE.MeshStandardMaterial({ color: 0xf0f0f0 }); // Light gray backdrop
+const backdropMaterial = new THREE.MeshStandardMaterial({ color: 0xf0f0f0 });
 const backdrop = new THREE.Mesh(backdropGeometry, backdropMaterial);
 backdrop.position.z = -150;
 backdrop.position.y = 150;
+backdrop.receiveShadow = true;
 scene.add(backdrop);
 
-// Key Light
-const keyLight = new THREE.DirectionalLight(0xffe0b2, 1); // Soft yellow light
-keyLight.position.set(100, 100, 100); // Positioned top-left
-scene.add(keyLight);
+// Set the target for the lights to point towards the center of the scene
+const target = new THREE.Object3D();
+target.position.set(0, 0, 0);
+scene.add(target);
 
-// Fill Light
-const fillLight = new THREE.DirectionalLight(0xffe0b2, 0.5); // Soft yellow light
-fillLight.position.set(-100, 50, 100); // Positioned bottom-right
-scene.add(fillLight);
+// Ambient Light
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+scene.add(ambientLight);
 
-// Camera Position
-camera.position.z = 300;
-camera.position.y = 100;
-camera.lookAt(0, 0, 0);
+// Main Spotlight
+const mainSpotLight = new THREE.SpotLight(0xffffff, 1);
+mainSpotLight.position.set(0, 300, 300);
+mainSpotLight.castShadow = true;
+mainSpotLight.angle = Math.PI / 4;
+mainSpotLight.penumbra = 0.5;
+mainSpotLight.decay = 2;
+mainSpotLight.distance = 1000;
+mainSpotLight.target = target;
+scene.add(mainSpotLight);
 
-const objLoader = new OBJLoader();
+const mainSpotLightHelper = new THREE.SpotLightHelper(mainSpotLight);
+scene.add(mainSpotLightHelper);
+
+// Front Left Spotlight
+const leftSpotLight = new THREE.SpotLight(0xffffff, 0.7); // Slightly lower intensity
+leftSpotLight.position.set(-300, 300, 300);
+leftSpotLight.castShadow = true;
+leftSpotLight.angle = Math.PI / 4;
+leftSpotLight.penumbra = 0.5;
+leftSpotLight.decay = 2;
+leftSpotLight.distance = 1000;
+leftSpotLight.target = target;
+scene.add(leftSpotLight);
+
+const leftSpotLightHelper = new THREE.SpotLightHelper(leftSpotLight);
+scene.add(leftSpotLightHelper);
+
+// Front Right Spotlight
+const rightSpotLight = new THREE.SpotLight(0xffffff, 0.7); // Slightly lower intensity
+rightSpotLight.position.set(300, 300, 300);
+rightSpotLight.castShadow = true;
+rightSpotLight.angle = Math.PI / 4;
+rightSpotLight.penumbra = 0.5;
+rightSpotLight.decay = 2;
+rightSpotLight.distance = 1000;
+rightSpotLight.target = target;
+scene.add(rightSpotLight);
+
+const rightSpotLightHelper = new THREE.SpotLightHelper(rightSpotLight);
+scene.add(rightSpotLightHelper);
+
+let model;
+let isRotating = false;
+let materialsVisible = true;
+
+function scaleModel(object) {
+  const box = new THREE.Box3().setFromObject(object);
+  const size = new THREE.Vector3();
+  box.getSize(size);
+
+  const minSize = 150;
+  const maxDimension = Math.max(size.x, size.y, size.z);
+
+  if (maxDimension < minSize) {
+    const scaleFactor = minSize / maxDimension;
+    object.scale.set(scaleFactor, scaleFactor, scaleFactor);
+  }
+}
 
 function placeOnFloor(object) {
-  // Initialize a variable to store the lowest y-coordinate
   let minY = Infinity;
-
-  // Traverse through all the children of the object (to cover all meshes)
   object.traverse(function (child) {
     if (child.isMesh) {
-      // Geometry might be a BufferGeometry or a Geometry, so handle both
       const geometry = child.geometry;
-
-      // For BufferGeometry, access the position attribute directly
       if (geometry.isBufferGeometry) {
         const position = geometry.attributes.position;
         for (let i = 0; i < position.count; i++) {
@@ -70,9 +123,7 @@ function placeOnFloor(object) {
             minY = y;
           }
         }
-      }
-      // For Geometry, access vertices directly
-      else if (geometry.isGeometry) {
+      } else if (geometry.isGeometry) {
         geometry.vertices.forEach((vertex) => {
           if (vertex.y < minY) {
             minY = vertex.y;
@@ -81,43 +132,138 @@ function placeOnFloor(object) {
       }
     }
   });
-
-  // Adjust the object's position by the negative of minY to raise it to the floor level
   object.position.y -= minY;
 }
 
-// Usage example:
-// After loading the OBJ or FBX model, call the placeOnFloor function
-objLoader.load("chair.obj", function (object) {
-  placeOnFloor(object);
-  scene.add(object);
+function storeOriginalMaterials(object) {
+  object.traverse(function (child) {
+    if (child.isMesh && child.material) {
+      if (Array.isArray(child.material)) {
+        child.userData.originalMaterial = child.material.map((mat) => mat.clone());
+      } else if (typeof child.material.clone === "function") {
+        child.userData.originalMaterial = child.material.clone();
+      }
+    }
+  });
+}
+
+function toggleMaterials() {
+  if (!model) return;
+
+  model.traverse(function (child) {
+    if (child.isMesh) {
+      if (materialsVisible) {
+        child.material = new THREE.MeshStandardMaterial({ color: 0x808080 });
+      } else {
+        if (child.userData.originalMaterial) {
+          child.material = child.userData.originalMaterial;
+        }
+      }
+    }
+  });
+
+  materialsVisible = !materialsVisible;
+}
+
+function handleFileSelect(event) {
+  const file = event.target.files[0];
+  if (!file) {
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = function (e) {
+    const contents = e.target.result;
+
+    if (model) {
+      scene.remove(model);
+    }
+
+    const objLoader = new OBJLoader();
+    const object = objLoader.parse(contents);
+
+    placeOnFloor(object);
+    scaleModel(object);
+    storeOriginalMaterials(object);
+
+    object.traverse(function (child) {
+      if (child.isMesh) {
+        child.castShadow = true;
+        child.receiveShadow = true;
+      }
+    });
+
+    model = object;
+    scene.add(model);
+  };
+
+  reader.readAsText(file);
+}
+
+document.getElementById("fileInput").addEventListener("change", handleFileSelect, false);
+
+window.addEventListener("keydown", function (event) {
+  if (event.key === "r" || event.key === "R") {
+    isRotating = !isRotating;
+  }
+
+  if (event.key === "l" || event.key === "L") {
+    currentColorIndex = (currentColorIndex + 1) % spotlightColors.length;
+
+    if (event.shiftKey) {
+      // Change only the central spotlight
+      mainSpotLight.color.setHex(spotlightColors[currentColorIndex]);
+    } else if (event.altKey) {
+      // Change only the left spotlight
+      leftSpotLight.color.setHex(spotlightColors[currentColorIndex]);
+    } else if (event.ctrlKey) {
+      // Change only the right spotlight
+      rightSpotLight.color.setHex(spotlightColors[currentColorIndex]);
+    } else {
+      // Change all three spotlights
+      mainSpotLight.color.setHex(spotlightColors[currentColorIndex]);
+      leftSpotLight.color.setHex(spotlightColors[currentColorIndex]);
+      rightSpotLight.color.setHex(spotlightColors[currentColorIndex]);
+    }
+  }
+
+  if (event.key === "m" || event.key === "M") {
+    toggleMaterials();
+  }
+
+  if (event.key === "s" || event.key === "S") {
+    shadowsEnabled = !shadowsEnabled;
+    toggleShadows(shadowsEnabled);
+  }
 });
 
-// Load the OBJ model
+function toggleShadows(enable) {
+  mainSpotLight.castShadow = enable;
+  leftSpotLight.castShadow = enable;
+  rightSpotLight.castShadow = enable;
+  if (model) {
+    model.traverse(function (child) {
+      if (child.isMesh) {
+        child.castShadow = enable;
+        child.receiveShadow = enable;
+      }
+    });
+  }
+}
 
-// objLoader.load(
-//   "chair.obj", // Replace with the correct path to your OBJ file
-//   function (object) {
-//     object.position.set(0, 50, 0); // Set the model's position in the scene
-//     scene.add(object);
-//   },
-//   function (xhr) {
-//     console.log((xhr.loaded / xhr.total) * 100 + "% loaded");
-//   },
-//   function (error) {
-//     console.error("An error happened", error);
-//   }
-// );
-
-// Animation Loop
 function animate() {
   requestAnimationFrame(animate);
-  controls.update(); // Update the controls on each frame
+
+  if (isRotating && model) {
+    model.rotation.y += 0.01;
+  }
+
+  controls.update();
   renderer.render(scene, camera);
 }
+
 animate();
 
-// Handle Window Resize
 window.addEventListener("resize", () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
   camera.aspect = window.innerWidth / window.innerHeight;
