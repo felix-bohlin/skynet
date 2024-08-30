@@ -79,6 +79,7 @@ def draw_object(vertices, edges, draw_mode):
 
 # Main game loop
 def main():
+    global light_intensity
     object_type = "cube"
     vertices, edges = generate_cube()
     clock = pygame.time.Clock()
