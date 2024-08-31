@@ -34,6 +34,9 @@ function App() {
   return (
     <div class="wrapper">
       <aside>
+        {/* Input file */}
+        <input type="file" id="fileInput" accept=".obj,.fbx" />
+
         {/* Rotation */}
         <label for="rotation">
           <input
