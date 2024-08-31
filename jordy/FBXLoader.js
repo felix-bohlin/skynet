@@ -2,6 +2,7 @@ import {
   AmbientLight,
   AnimationClip,
   Bone,
+  BufferAttribute,
   BufferGeometry,
   ClampToEdgeWrapping,
   Color,
@@ -36,15 +37,13 @@ import {
   Texture,
   TextureLoader,
   Uint16BufferAttribute,
-  Vector2,
   Vector3,
   Vector4,
   VectorKeyframeTrack,
-  SRGBColorSpace,
-  ShapeUtils,
+  sRGBEncoding,
 } from "./three.module.js";
-import * as fflate from "../libs/fflate.module.js";
-import { NURBSCurve } from "../curves/NURBSCurve.js";
+import * as fflate from "./fflate.module.js";
+import { NURBSCurve } from "./NURBSCurve.js";
 
 /**
  * Loader loads FBX file and generates Group representing FBX scene.
@@ -55,10 +54,11 @@ import { NURBSCurve } from "../curves/NURBSCurve.js";
  *  Morph normals / blend shape normals
  *
  * FBX format references:
- * 	https://help.autodesk.com/view/FBX/2017/ENU/?guid=__cpp_ref_index_html (C++ SDK reference)
+ * 	https://wiki.blender.org/index.php/User:Mont29/Foundation/FBX_File_Structure
+ * 	http://help.autodesk.com/view/FBX/2017/ENU/?guid=__cpp_ref_index_html (C++ SDK reference)
  *
- * Binary format specification:
- *	https://code.blender.org/2013/08/fbx-binary-file-format-specification/
+ * 	Binary format specification:
+ *		https://code.blender.org/2013/08/fbx-binary-file-format-specification/
  */
 
 let fbxTree;
@@ -323,54 +323,49 @@ class FBXTreeParser {
       texture.repeat.y = values[1];
     }
 
-    if ("Translation" in textureNode) {
-      const values = textureNode.Translation.value;
-
-      texture.offset.x = values[0];
-      texture.offset.y = values[1];
-    }
-
     return texture;
   }
 
   // load a texture specified as a blob or data URI, or via an external URL using TextureLoader
   loadTexture(textureNode, images) {
-    const nonNativeExtensions = new Set(["tga", "tif", "tiff", "exr", "dds", "hdr", "ktx2"]);
+    let fileName;
 
-    const extension = textureNode.FileName.split(".").pop().toLowerCase();
-
-    const loader = nonNativeExtensions.has(extension) ? this.manager.getHandler(`.${extension}`) : this.textureLoader;
-
-    if (!loader) {
-      console.warn(
-        `FBXLoader: ${extension.toUpperCase()} loader not found, creating placeholder texture for`,
-        textureNode.RelativeFilename
-      );
-      return new Texture();
-    }
-
-    const loaderPath = loader.path;
-
-    if (!loaderPath) {
-      loader.setPath(this.textureLoader.path);
-    }
+    const currentPath = this.textureLoader.path;
 
     const children = connections.get(textureNode.id).children;
-
-    let fileName;
 
     if (children !== undefined && children.length > 0 && images[children[0].ID] !== undefined) {
       fileName = images[children[0].ID];
 
       if (fileName.indexOf("blob:") === 0 || fileName.indexOf("data:") === 0) {
-        loader.setPath(undefined);
+        this.textureLoader.setPath(undefined);
       }
     }
 
-    const texture = loader.load(fileName);
+    let texture;
 
-    // revert to initial path
-    loader.setPath(loaderPath);
+    const extension = textureNode.FileName.slice(-3).toLowerCase();
+
+    if (extension === "tga") {
+      const loader = this.manager.getHandler(".tga");
+
+      if (loader === null) {
+        console.warn("FBXLoader: TGA loader not found, creating placeholder texture for", textureNode.RelativeFilename);
+        texture = new Texture();
+      } else {
+        texture = loader.load(fileName);
+      }
+    } else if (extension === "psd") {
+      console.warn(
+        "FBXLoader: PSD textures are not supported, creating placeholder texture for",
+        textureNode.RelativeFilename
+      );
+      texture = new Texture();
+    } else {
+      texture = this.textureLoader.load(fileName);
+    }
+
+    this.textureLoader.setPath(currentPath);
 
     return texture;
   }
@@ -441,13 +436,13 @@ class FBXTreeParser {
     }
 
     if (materialNode.Diffuse) {
-      parameters.color = new Color().fromArray(materialNode.Diffuse.value).convertSRGBToLinear();
+      parameters.color = new Color().fromArray(materialNode.Diffuse.value);
     } else if (
       materialNode.DiffuseColor &&
       (materialNode.DiffuseColor.type === "Color" || materialNode.DiffuseColor.type === "ColorRGB")
     ) {
       // The blender exporter exports diffuse here instead of in materialNode.Diffuse
-      parameters.color = new Color().fromArray(materialNode.DiffuseColor.value).convertSRGBToLinear();
+      parameters.color = new Color().fromArray(materialNode.DiffuseColor.value);
     }
 
     if (materialNode.DisplacementFactor) {
@@ -455,13 +450,13 @@ class FBXTreeParser {
     }
 
     if (materialNode.Emissive) {
-      parameters.emissive = new Color().fromArray(materialNode.Emissive.value).convertSRGBToLinear();
+      parameters.emissive = new Color().fromArray(materialNode.Emissive.value);
     } else if (
       materialNode.EmissiveColor &&
       (materialNode.EmissiveColor.type === "Color" || materialNode.EmissiveColor.type === "ColorRGB")
     ) {
       // The blender exporter exports emissive color here instead of in materialNode.Emissive
-      parameters.emissive = new Color().fromArray(materialNode.EmissiveColor.value).convertSRGBToLinear();
+      parameters.emissive = new Color().fromArray(materialNode.EmissiveColor.value);
     }
 
     if (materialNode.EmissiveFactor) {
@@ -485,10 +480,10 @@ class FBXTreeParser {
     }
 
     if (materialNode.Specular) {
-      parameters.specular = new Color().fromArray(materialNode.Specular.value).convertSRGBToLinear();
+      parameters.specular = new Color().fromArray(materialNode.Specular.value);
     } else if (materialNode.SpecularColor && materialNode.SpecularColor.type === "Color") {
       // The blender exporter exports specular color here instead of in materialNode.Specular
-      parameters.specular = new Color().fromArray(materialNode.SpecularColor.value).convertSRGBToLinear();
+      parameters.specular = new Color().fromArray(materialNode.SpecularColor.value);
     }
 
     const scope = this;
@@ -507,10 +502,7 @@ class FBXTreeParser {
         case "DiffuseColor":
         case "Maya|TEX_color_map":
           parameters.map = scope.getTexture(textureMap, child.ID);
-          if (parameters.map !== undefined) {
-            parameters.map.colorSpace = SRGBColorSpace;
-          }
-
+          parameters.map.encoding = sRGBEncoding;
           break;
 
         case "DisplacementColor":
@@ -519,10 +511,7 @@ class FBXTreeParser {
 
         case "EmissiveColor":
           parameters.emissiveMap = scope.getTexture(textureMap, child.ID);
-          if (parameters.emissiveMap !== undefined) {
-            parameters.emissiveMap.colorSpace = SRGBColorSpace;
-          }
-
+          parameters.emissiveMap.encoding = sRGBEncoding;
           break;
 
         case "NormalMap":
@@ -532,19 +521,13 @@ class FBXTreeParser {
 
         case "ReflectionColor":
           parameters.envMap = scope.getTexture(textureMap, child.ID);
-          if (parameters.envMap !== undefined) {
-            parameters.envMap.mapping = EquirectangularReflectionMapping;
-            parameters.envMap.colorSpace = SRGBColorSpace;
-          }
-
+          parameters.envMap.mapping = EquirectangularReflectionMapping;
+          parameters.envMap.encoding = sRGBEncoding;
           break;
 
         case "SpecularColor":
           parameters.specularMap = scope.getTexture(textureMap, child.ID);
-          if (parameters.specularMap !== undefined) {
-            parameters.specularMap.colorSpace = SRGBColorSpace;
-          }
-
+          parameters.specularMap.encoding = sRGBEncoding;
           break;
 
         case "TransparentColor":
@@ -712,7 +695,9 @@ class FBXTreeParser {
 
     this.bindSkeleton(deformers.skeletons, geometryMap, modelMap);
 
-    this.addGlobalSceneSettings();
+    this.createAmbientLight();
+
+    this.setupMorphMaterials();
 
     sceneGraph.traverse(function (node) {
       if (node.userData.transformData) {
@@ -776,7 +761,6 @@ class FBXTreeParser {
         }
 
         model.name = node.attrName ? PropertyBinding.sanitizeNodeName(node.attrName) : "";
-        model.userData.originalName = node.attrName;
 
         model.ID = id;
       }
@@ -805,7 +789,6 @@ class FBXTreeParser {
             // set name and id here - otherwise in cases where "subBone" is created it will not have a name / id
 
             bone.name = name ? PropertyBinding.sanitizeNodeName(name) : "";
-            bone.userData.originalName = name;
             bone.ID = id;
 
             skeleton.bones[i] = bone;
@@ -926,7 +909,7 @@ class FBXTreeParser {
       let color = 0xffffff;
 
       if (lightAttribute.Color !== undefined) {
-        color = new Color().fromArray(lightAttribute.Color.value).convertSRGBToLinear();
+        color = new Color().fromArray(lightAttribute.Color.value);
       }
 
       let intensity = lightAttribute.Intensity === undefined ? 1 : lightAttribute.Intensity.value / 100;
@@ -1014,10 +997,7 @@ class FBXTreeParser {
     } else if (materials.length > 0) {
       material = materials[0];
     } else {
-      material = new MeshPhongMaterial({
-        name: Loader.DEFAULT_MATERIAL_NAME,
-        color: 0xcccccc,
-      });
+      material = new MeshPhongMaterial({ color: 0xcccccc });
       materials.push(material);
     }
 
@@ -1028,6 +1008,10 @@ class FBXTreeParser {
     }
 
     if (geometry.FBX_Deformer) {
+      materials.forEach(function (material) {
+        material.skinning = true;
+      });
+
       model = new SkinnedMesh(geometry, material);
       model.normalizeSkinWeights();
     } else {
@@ -1045,11 +1029,7 @@ class FBXTreeParser {
     }, null);
 
     // FBX does not list materials for Nurbs lines, so we'll just put our own in here.
-    const material = new LineBasicMaterial({
-      name: Loader.DEFAULT_MATERIAL_NAME,
-      color: 0x3300ff,
-      linewidth: 1,
-    });
+    const material = new LineBasicMaterial({ color: 0x3300ff, linewidth: 1 });
     return new Line(geometry, material);
   }
 
@@ -1137,7 +1117,7 @@ class FBXTreeParser {
       const BindPoseNode = fbxTree.Objects.Pose;
 
       for (const nodeID in BindPoseNode) {
-        if (BindPoseNode[nodeID].attrType === "BindPose" && BindPoseNode[nodeID].NbPoseNodes > 0) {
+        if (BindPoseNode[nodeID].attrType === "BindPose") {
           const poseNodes = BindPoseNode[nodeID].PoseNode;
 
           if (Array.isArray(poseNodes)) {
@@ -1154,35 +1134,67 @@ class FBXTreeParser {
     return bindMatrices;
   }
 
-  addGlobalSceneSettings() {
-    if ("GlobalSettings" in fbxTree) {
-      if ("AmbientColor" in fbxTree.GlobalSettings) {
-        // Parse ambient color - if it's not set to black (default), create an ambient light
+  // Parse ambient color in FBXTree.GlobalSettings - if it's not set to black (default), create an ambient light
+  createAmbientLight() {
+    if ("GlobalSettings" in fbxTree && "AmbientColor" in fbxTree.GlobalSettings) {
+      const ambientColor = fbxTree.GlobalSettings.AmbientColor.value;
+      const r = ambientColor[0];
+      const g = ambientColor[1];
+      const b = ambientColor[2];
 
-        const ambientColor = fbxTree.GlobalSettings.AmbientColor.value;
-        const r = ambientColor[0];
-        const g = ambientColor[1];
-        const b = ambientColor[2];
-
-        if (r !== 0 || g !== 0 || b !== 0) {
-          const color = new Color(r, g, b).convertSRGBToLinear();
-          sceneGraph.add(new AmbientLight(color, 1));
-        }
-      }
-
-      if ("UnitScaleFactor" in fbxTree.GlobalSettings) {
-        sceneGraph.userData.unitScaleFactor = fbxTree.GlobalSettings.UnitScaleFactor.value;
+      if (r !== 0 || g !== 0 || b !== 0) {
+        const color = new Color(r, g, b);
+        sceneGraph.add(new AmbientLight(color, 1));
       }
     }
+  }
+
+  setupMorphMaterials() {
+    const scope = this;
+    sceneGraph.traverse(function (child) {
+      if (child.isMesh) {
+        if (child.geometry.morphAttributes.position && child.geometry.morphAttributes.position.length) {
+          if (Array.isArray(child.material)) {
+            child.material.forEach(function (material, i) {
+              scope.setupMorphMaterial(child, material, i);
+            });
+          } else {
+            scope.setupMorphMaterial(child, child.material);
+          }
+        }
+      }
+    });
+  }
+
+  setupMorphMaterial(child, material, index) {
+    const uuid = child.uuid;
+    const matUuid = material.uuid;
+
+    // if a geometry has morph targets, it cannot share the material with other geometries
+    let sharedMat = false;
+
+    sceneGraph.traverse(function (node) {
+      if (node.isMesh) {
+        if (Array.isArray(node.material)) {
+          node.material.forEach(function (mat) {
+            if (mat.uuid === matUuid && node.uuid !== uuid) sharedMat = true;
+          });
+        } else if (node.material.uuid === matUuid && node.uuid !== uuid) sharedMat = true;
+      }
+    });
+
+    if (sharedMat === true) {
+      const clonedMat = material.clone();
+      clonedMat.morphTargets = true;
+
+      if (index === undefined) child.material = clonedMat;
+      else child.material[index] = clonedMat;
+    } else material.morphTargets = true;
   }
 }
 
 // parse Geometry data from FBXTree and return map of BufferGeometries
 class GeometryParser {
-  constructor() {
-    this.negativeMaterialIndices = false;
-  }
-
   // Parse nodes in FBXTree.Objects.Geometry
   parse(deformers) {
     const geometryMap = new Map();
@@ -1196,14 +1208,6 @@ class GeometryParser {
 
         geometryMap.set(parseInt(nodeID), geo);
       }
-    }
-
-    // report warnings
-
-    if (this.negativeMaterialIndices === true) {
-      console.warn(
-        "THREE.FBXLoader: The FBX file contains invalid (negative) material indices. The asset might not render as expected."
-      );
     }
 
     return geometryMap;
@@ -1301,7 +1305,13 @@ class GeometryParser {
     }
 
     buffers.uvs.forEach(function (uvBuffer, i) {
-      const name = i === 0 ? "uv" : `uv${i}`;
+      // subsequent uv buffers are called 'uv1', 'uv2', ...
+      let name = "uv" + (i + 1).toString();
+
+      // the first uv buffer is just called 'uv'
+      if (i === 0) {
+        name = "uv";
+      }
 
       geo.setAttribute(name, new Float32BufferAttribute(buffers.uvs[i], 2));
     });
@@ -1504,11 +1514,6 @@ class GeometryParser {
 
       if (geoInfo.material && geoInfo.material.mappingType !== "AllSame") {
         materialIndex = getData(polygonVertexIndex, polygonIndex, vertexIndex, geoInfo.material)[0];
-
-        if (materialIndex < 0) {
-          scope.negativeMaterialIndices = true;
-          materialIndex = 0; // fallback
-        }
       }
 
       if (geoInfo.uv) {
@@ -1556,42 +1561,6 @@ class GeometryParser {
     return buffers;
   }
 
-  // See https://www.khronos.org/opengl/wiki/Calculating_a_Surface_Normal
-  getNormalNewell(vertices) {
-    const normal = new Vector3(0.0, 0.0, 0.0);
-
-    for (let i = 0; i < vertices.length; i++) {
-      const current = vertices[i];
-      const next = vertices[(i + 1) % vertices.length];
-
-      normal.x += (current.y - next.y) * (current.z + next.z);
-      normal.y += (current.z - next.z) * (current.x + next.x);
-      normal.z += (current.x - next.x) * (current.y + next.y);
-    }
-
-    normal.normalize();
-
-    return normal;
-  }
-
-  getNormalTangentAndBitangent(vertices) {
-    const normalVector = this.getNormalNewell(vertices);
-    // Avoid up being equal or almost equal to normalVector
-    const up = Math.abs(normalVector.z) > 0.5 ? new Vector3(0.0, 1.0, 0.0) : new Vector3(0.0, 0.0, 1.0);
-    const tangent = up.cross(normalVector).normalize();
-    const bitangent = normalVector.clone().cross(tangent).normalize();
-
-    return {
-      normal: normalVector,
-      tangent: tangent,
-      bitangent: bitangent,
-    };
-  }
-
-  flattenVertex(vertex, normalTangent, normalBitangent) {
-    return new Vector2(vertex.dot(normalTangent), vertex.dot(normalBitangent));
-  }
-
   // Generate data for a single face in a geometry. If the face is a quad then split it into 2 tris
   genFace(
     buffers,
@@ -1605,101 +1574,63 @@ class GeometryParser {
     faceWeightIndices,
     faceLength
   ) {
-    let triangles;
+    for (let i = 2; i < faceLength; i++) {
+      buffers.vertex.push(geoInfo.vertexPositions[facePositionIndexes[0]]);
+      buffers.vertex.push(geoInfo.vertexPositions[facePositionIndexes[1]]);
+      buffers.vertex.push(geoInfo.vertexPositions[facePositionIndexes[2]]);
 
-    if (faceLength > 3) {
-      // Triangulate n-gon using earcut
+      buffers.vertex.push(geoInfo.vertexPositions[facePositionIndexes[(i - 1) * 3]]);
+      buffers.vertex.push(geoInfo.vertexPositions[facePositionIndexes[(i - 1) * 3 + 1]]);
+      buffers.vertex.push(geoInfo.vertexPositions[facePositionIndexes[(i - 1) * 3 + 2]]);
 
-      const vertices = [];
-      // in morphing scenario vertexPositions represent morphPositions
-      // while baseVertexPositions represent the original geometry's positions
-      const positions = geoInfo.baseVertexPositions || geoInfo.vertexPositions;
-      for (let i = 0; i < facePositionIndexes.length; i += 3) {
-        vertices.push(
-          new Vector3(
-            positions[facePositionIndexes[i]],
-            positions[facePositionIndexes[i + 1]],
-            positions[facePositionIndexes[i + 2]]
-          )
-        );
-      }
-
-      const { tangent, bitangent } = this.getNormalTangentAndBitangent(vertices);
-      const triangulationInput = [];
-
-      for (const vertex of vertices) {
-        triangulationInput.push(this.flattenVertex(vertex, tangent, bitangent));
-      }
-
-      // When vertices is an array of [0,0,0] elements (which is the case for vertices not participating in morph)
-      // the triangulationInput will be an array of [0,0] elements
-      // resulting in an array of 0 triangles being returned from ShapeUtils.triangulateShape
-      // leading to not pushing into buffers.vertex the redundant vertices (the vertices that are not morphed).
-      // That's why, in order to support morphing scenario, "positions" is looking first for baseVertexPositions,
-      // so that we don't end up with an array of 0 triangles for the faces not participating in morph.
-      triangles = ShapeUtils.triangulateShape(triangulationInput, []);
-    } else {
-      // Regular triangle, skip earcut triangulation step
-      triangles = [[0, 1, 2]];
-    }
-
-    for (const [i0, i1, i2] of triangles) {
-      buffers.vertex.push(geoInfo.vertexPositions[facePositionIndexes[i0 * 3]]);
-      buffers.vertex.push(geoInfo.vertexPositions[facePositionIndexes[i0 * 3 + 1]]);
-      buffers.vertex.push(geoInfo.vertexPositions[facePositionIndexes[i0 * 3 + 2]]);
-
-      buffers.vertex.push(geoInfo.vertexPositions[facePositionIndexes[i1 * 3]]);
-      buffers.vertex.push(geoInfo.vertexPositions[facePositionIndexes[i1 * 3 + 1]]);
-      buffers.vertex.push(geoInfo.vertexPositions[facePositionIndexes[i1 * 3 + 2]]);
-
-      buffers.vertex.push(geoInfo.vertexPositions[facePositionIndexes[i2 * 3]]);
-      buffers.vertex.push(geoInfo.vertexPositions[facePositionIndexes[i2 * 3 + 1]]);
-      buffers.vertex.push(geoInfo.vertexPositions[facePositionIndexes[i2 * 3 + 2]]);
+      buffers.vertex.push(geoInfo.vertexPositions[facePositionIndexes[i * 3]]);
+      buffers.vertex.push(geoInfo.vertexPositions[facePositionIndexes[i * 3 + 1]]);
+      buffers.vertex.push(geoInfo.vertexPositions[facePositionIndexes[i * 3 + 2]]);
 
       if (geoInfo.skeleton) {
-        buffers.vertexWeights.push(faceWeights[i0 * 4]);
-        buffers.vertexWeights.push(faceWeights[i0 * 4 + 1]);
-        buffers.vertexWeights.push(faceWeights[i0 * 4 + 2]);
-        buffers.vertexWeights.push(faceWeights[i0 * 4 + 3]);
+        buffers.vertexWeights.push(faceWeights[0]);
+        buffers.vertexWeights.push(faceWeights[1]);
+        buffers.vertexWeights.push(faceWeights[2]);
+        buffers.vertexWeights.push(faceWeights[3]);
 
-        buffers.vertexWeights.push(faceWeights[i1 * 4]);
-        buffers.vertexWeights.push(faceWeights[i1 * 4 + 1]);
-        buffers.vertexWeights.push(faceWeights[i1 * 4 + 2]);
-        buffers.vertexWeights.push(faceWeights[i1 * 4 + 3]);
+        buffers.vertexWeights.push(faceWeights[(i - 1) * 4]);
+        buffers.vertexWeights.push(faceWeights[(i - 1) * 4 + 1]);
+        buffers.vertexWeights.push(faceWeights[(i - 1) * 4 + 2]);
+        buffers.vertexWeights.push(faceWeights[(i - 1) * 4 + 3]);
 
-        buffers.vertexWeights.push(faceWeights[i2 * 4]);
-        buffers.vertexWeights.push(faceWeights[i2 * 4 + 1]);
-        buffers.vertexWeights.push(faceWeights[i2 * 4 + 2]);
-        buffers.vertexWeights.push(faceWeights[i2 * 4 + 3]);
+        buffers.vertexWeights.push(faceWeights[i * 4]);
+        buffers.vertexWeights.push(faceWeights[i * 4 + 1]);
+        buffers.vertexWeights.push(faceWeights[i * 4 + 2]);
+        buffers.vertexWeights.push(faceWeights[i * 4 + 3]);
 
-        buffers.weightsIndices.push(faceWeightIndices[i0 * 4]);
-        buffers.weightsIndices.push(faceWeightIndices[i0 * 4 + 1]);
-        buffers.weightsIndices.push(faceWeightIndices[i0 * 4 + 2]);
-        buffers.weightsIndices.push(faceWeightIndices[i0 * 4 + 3]);
+        buffers.weightsIndices.push(faceWeightIndices[0]);
+        buffers.weightsIndices.push(faceWeightIndices[1]);
+        buffers.weightsIndices.push(faceWeightIndices[2]);
+        buffers.weightsIndices.push(faceWeightIndices[3]);
 
-        buffers.weightsIndices.push(faceWeightIndices[i1 * 4]);
-        buffers.weightsIndices.push(faceWeightIndices[i1 * 4 + 1]);
-        buffers.weightsIndices.push(faceWeightIndices[i1 * 4 + 2]);
-        buffers.weightsIndices.push(faceWeightIndices[i1 * 4 + 3]);
+        buffers.weightsIndices.push(faceWeightIndices[(i - 1) * 4]);
+        buffers.weightsIndices.push(faceWeightIndices[(i - 1) * 4 + 1]);
+        buffers.weightsIndices.push(faceWeightIndices[(i - 1) * 4 + 2]);
+        buffers.weightsIndices.push(faceWeightIndices[(i - 1) * 4 + 3]);
 
-        buffers.weightsIndices.push(faceWeightIndices[i2 * 4]);
-        buffers.weightsIndices.push(faceWeightIndices[i2 * 4 + 1]);
-        buffers.weightsIndices.push(faceWeightIndices[i2 * 4 + 2]);
-        buffers.weightsIndices.push(faceWeightIndices[i2 * 4 + 3]);
+        buffers.weightsIndices.push(faceWeightIndices[i * 4]);
+        buffers.weightsIndices.push(faceWeightIndices[i * 4 + 1]);
+        buffers.weightsIndices.push(faceWeightIndices[i * 4 + 2]);
+        buffers.weightsIndices.push(faceWeightIndices[i * 4 + 3]);
       }
 
       if (geoInfo.color) {
-        buffers.colors.push(faceColors[i0 * 3]);
-        buffers.colors.push(faceColors[i0 * 3 + 1]);
-        buffers.colors.push(faceColors[i0 * 3 + 2]);
+        buffers.colors.push(faceColors[0]);
+        buffers.colors.push(faceColors[1]);
+        buffers.colors.push(faceColors[2]);
 
-        buffers.colors.push(faceColors[i1 * 3]);
-        buffers.colors.push(faceColors[i1 * 3 + 1]);
-        buffers.colors.push(faceColors[i1 * 3 + 2]);
+        buffers.colors.push(faceColors[(i - 1) * 3]);
+        buffers.colors.push(faceColors[(i - 1) * 3 + 1]);
+        buffers.colors.push(faceColors[(i - 1) * 3 + 2]);
 
-        buffers.colors.push(faceColors[i2 * 3]);
-        buffers.colors.push(faceColors[i2 * 3 + 1]);
-        buffers.colors.push(faceColors[i2 * 3 + 2]);
+        buffers.colors.push(faceColors[i * 3]);
+        buffers.colors.push(faceColors[i * 3 + 1]);
+        buffers.colors.push(faceColors[i * 3 + 2]);
       }
 
       if (geoInfo.material && geoInfo.material.mappingType !== "AllSame") {
@@ -1709,31 +1640,31 @@ class GeometryParser {
       }
 
       if (geoInfo.normal) {
-        buffers.normal.push(faceNormals[i0 * 3]);
-        buffers.normal.push(faceNormals[i0 * 3 + 1]);
-        buffers.normal.push(faceNormals[i0 * 3 + 2]);
+        buffers.normal.push(faceNormals[0]);
+        buffers.normal.push(faceNormals[1]);
+        buffers.normal.push(faceNormals[2]);
 
-        buffers.normal.push(faceNormals[i1 * 3]);
-        buffers.normal.push(faceNormals[i1 * 3 + 1]);
-        buffers.normal.push(faceNormals[i1 * 3 + 2]);
+        buffers.normal.push(faceNormals[(i - 1) * 3]);
+        buffers.normal.push(faceNormals[(i - 1) * 3 + 1]);
+        buffers.normal.push(faceNormals[(i - 1) * 3 + 2]);
 
-        buffers.normal.push(faceNormals[i2 * 3]);
-        buffers.normal.push(faceNormals[i2 * 3 + 1]);
-        buffers.normal.push(faceNormals[i2 * 3 + 2]);
+        buffers.normal.push(faceNormals[i * 3]);
+        buffers.normal.push(faceNormals[i * 3 + 1]);
+        buffers.normal.push(faceNormals[i * 3 + 2]);
       }
 
       if (geoInfo.uv) {
         geoInfo.uv.forEach(function (uv, j) {
           if (buffers.uvs[j] === undefined) buffers.uvs[j] = [];
 
-          buffers.uvs[j].push(faceUVs[j][i0 * 2]);
-          buffers.uvs[j].push(faceUVs[j][i0 * 2 + 1]);
+          buffers.uvs[j].push(faceUVs[j][0]);
+          buffers.uvs[j].push(faceUVs[j][1]);
 
-          buffers.uvs[j].push(faceUVs[j][i1 * 2]);
-          buffers.uvs[j].push(faceUVs[j][i1 * 2 + 1]);
+          buffers.uvs[j].push(faceUVs[j][(i - 1) * 2]);
+          buffers.uvs[j].push(faceUVs[j][(i - 1) * 2 + 1]);
 
-          buffers.uvs[j].push(faceUVs[j][i2 * 2]);
-          buffers.uvs[j].push(faceUVs[j][i2 * 2 + 1]);
+          buffers.uvs[j].push(faceUVs[j][i * 2]);
+          buffers.uvs[j].push(faceUVs[j][i * 2 + 1]);
         });
       }
     }
@@ -1764,17 +1695,16 @@ class GeometryParser {
   // and a special attribute Index defining which vertices of the original geometry are affected
   // Normal and position attributes only have data for the vertices that are affected by the morph
   genMorphGeometry(parentGeo, parentGeoNode, morphGeoNode, preTransform, name) {
-    const basePositions = parentGeoNode.Vertices !== undefined ? parentGeoNode.Vertices.a : [];
-    const baseIndices = parentGeoNode.PolygonVertexIndex !== undefined ? parentGeoNode.PolygonVertexIndex.a : [];
+    const vertexIndices = parentGeoNode.PolygonVertexIndex !== undefined ? parentGeoNode.PolygonVertexIndex.a : [];
 
     const morphPositionsSparse = morphGeoNode.Vertices !== undefined ? morphGeoNode.Vertices.a : [];
-    const morphIndices = morphGeoNode.Indexes !== undefined ? morphGeoNode.Indexes.a : [];
+    const indices = morphGeoNode.Indexes !== undefined ? morphGeoNode.Indexes.a : [];
 
     const length = parentGeo.attributes.position.count * 3;
     const morphPositions = new Float32Array(length);
 
-    for (let i = 0; i < morphIndices.length; i++) {
-      const morphIndex = morphIndices[i] * 3;
+    for (let i = 0; i < indices.length; i++) {
+      const morphIndex = indices[i] * 3;
 
       morphPositions[morphIndex] = morphPositionsSparse[i * 3];
       morphPositions[morphIndex + 1] = morphPositionsSparse[i * 3 + 1];
@@ -1783,9 +1713,8 @@ class GeometryParser {
 
     // TODO: add morph normal support
     const morphGeoInfo = {
-      vertexIndices: baseIndices,
+      vertexIndices: vertexIndices,
       vertexPositions: morphPositions,
-      baseVertexPositions: basePositions,
     };
 
     const morphBuffers = this.genBuffers(morphGeoInfo);
@@ -1850,10 +1779,6 @@ class GeometryParser {
       indexBuffer = ColorNode.ColorIndex.a;
     }
 
-    for (let i = 0, c = new Color(); i < buffer.length; i += 4) {
-      c.fromArray(buffer, i).convertSRGBToLinear().toArray(buffer, i);
-    }
-
     return {
       dataSize: 4,
       buffer: buffer,
@@ -1900,6 +1825,13 @@ class GeometryParser {
 
   // Generate a NurbGeometry from a node in FBXTree.Objects.Geometry
   parseNurbsGeometry(geoNode) {
+    if (NURBSCurve === undefined) {
+      console.error(
+        "THREE.FBXLoader: The loader relies on NURBSCurve for any nurbs present in the model. Nurbs will show up as empty geometry."
+      );
+      return new BufferGeometry();
+    }
+
     const order = parseInt(geoNode.Order);
 
     if (isNaN(order)) {
@@ -1931,9 +1863,18 @@ class GeometryParser {
     }
 
     const curve = new NURBSCurve(degree, knots, controlPoints, startKnot, endKnot);
-    const points = curve.getPoints(controlPoints.length * 12);
+    const vertices = curve.getPoints(controlPoints.length * 7);
 
-    return new BufferGeometry().setFromPoints(points);
+    const positions = new Float32Array(vertices.length * 3);
+
+    vertices.forEach(function (vertex, i) {
+      vertex.toArray(positions, i * 3);
+    });
+
+    const geometry = new BufferGeometry();
+    geometry.setAttribute("position", new BufferAttribute(positions, 3));
+
+    return geometry;
   }
 }
 
@@ -2030,7 +1971,7 @@ class AnimationParser {
           curveNodesMap.get(animationCurveID).curves["y"] = animationCurve;
         } else if (animationCurveRelationship.match(/Z/)) {
           curveNodesMap.get(animationCurveID).curves["z"] = animationCurve;
-        } else if (animationCurveRelationship.match(/DeformPercent/) && curveNodesMap.has(animationCurveID)) {
+        } else if (animationCurveRelationship.match(/d|DeformPercent/) && curveNodesMap.has(animationCurveID)) {
           curveNodesMap.get(animationCurveID).curves["morph"] = animationCurve;
         }
       }
@@ -2184,11 +2125,13 @@ class AnimationParser {
     const tracks = [];
 
     let initialPosition = new Vector3();
+    let initialRotation = new Quaternion();
     let initialScale = new Vector3();
 
-    if (rawTracks.transform) rawTracks.transform.decompose(initialPosition, new Quaternion(), initialScale);
+    if (rawTracks.transform) rawTracks.transform.decompose(initialPosition, initialRotation, initialScale);
 
     initialPosition = initialPosition.toArray();
+    initialRotation = new Euler().setFromQuaternion(initialRotation, rawTracks.eulerOrder).toArray();
     initialScale = initialScale.toArray();
 
     if (rawTracks.T !== undefined && Object.keys(rawTracks.T.curves).length > 0) {
@@ -2205,6 +2148,7 @@ class AnimationParser {
       const rotationTrack = this.generateRotationTrack(
         rawTracks.modelName,
         rawTracks.R.curves,
+        initialRotation,
         rawTracks.preRotation,
         rawTracks.postRotation,
         rawTracks.eulerOrder
@@ -2232,16 +2176,24 @@ class AnimationParser {
     return new VectorKeyframeTrack(modelName + "." + type, times, values);
   }
 
-  generateRotationTrack(modelName, curves, preRotation, postRotation, eulerOrder) {
-    let times;
-    let values;
-
-    if (curves.x !== undefined && curves.y !== undefined && curves.z !== undefined) {
-      const result = this.interpolateRotations(curves.x, curves.y, curves.z, eulerOrder);
-
-      times = result[0];
-      values = result[1];
+  generateRotationTrack(modelName, curves, initialValue, preRotation, postRotation, eulerOrder) {
+    if (curves.x !== undefined) {
+      this.interpolateRotations(curves.x);
+      curves.x.values = curves.x.values.map(MathUtils.degToRad);
     }
+
+    if (curves.y !== undefined) {
+      this.interpolateRotations(curves.y);
+      curves.y.values = curves.y.values.map(MathUtils.degToRad);
+    }
+
+    if (curves.z !== undefined) {
+      this.interpolateRotations(curves.z);
+      curves.z.values = curves.z.values.map(MathUtils.degToRad);
+    }
+
+    const times = this.getTimesForAllAxes(curves);
+    const values = this.getKeyframeTrackValues(times, curves, initialValue);
 
     if (preRotation !== undefined) {
       preRotation = preRotation.map(MathUtils.degToRad);
@@ -2264,23 +2216,13 @@ class AnimationParser {
 
     const quaternionValues = [];
 
-    if (!values || !times) return new QuaternionKeyframeTrack(modelName + ".quaternion", [0], [0]);
-
     for (let i = 0; i < values.length; i += 3) {
       euler.set(values[i], values[i + 1], values[i + 2], eulerOrder);
+
       quaternion.setFromEuler(euler);
 
       if (preRotation !== undefined) quaternion.premultiply(preRotation);
       if (postRotation !== undefined) quaternion.multiply(postRotation);
-
-      // Check unroll
-      if (i > 2) {
-        const prevQuat = new Quaternion().fromArray(quaternionValues, ((i - 3) / 3) * 4);
-
-        if (prevQuat.dot(quaternion) < 0) {
-          quaternion.set(-quaternion.x, -quaternion.y, -quaternion.z, -quaternion.w);
-        }
-      }
 
       quaternion.toArray(quaternionValues, (i / 3) * 4);
     }
@@ -2384,82 +2326,39 @@ class AnimationParser {
   // Rotations are defined as Euler angles which can have values  of any size
   // These will be converted to quaternions which don't support values greater than
   // PI, so we'll interpolate large rotations
-  interpolateRotations(curvex, curvey, curvez, eulerOrder) {
-    const times = [];
-    const values = [];
+  interpolateRotations(curve) {
+    for (let i = 1; i < curve.values.length; i++) {
+      const initialValue = curve.values[i - 1];
+      const valuesSpan = curve.values[i] - initialValue;
 
-    // Add first frame
-    times.push(curvex.times[0]);
-    values.push(MathUtils.degToRad(curvex.values[0]));
-    values.push(MathUtils.degToRad(curvey.values[0]));
-    values.push(MathUtils.degToRad(curvez.values[0]));
+      const absoluteSpan = Math.abs(valuesSpan);
 
-    for (let i = 1; i < curvex.values.length; i++) {
-      const initialValue = [curvex.values[i - 1], curvey.values[i - 1], curvez.values[i - 1]];
+      if (absoluteSpan >= 180) {
+        const numSubIntervals = absoluteSpan / 180;
 
-      if (isNaN(initialValue[0]) || isNaN(initialValue[1]) || isNaN(initialValue[2])) {
-        continue;
-      }
+        const step = valuesSpan / numSubIntervals;
+        let nextValue = initialValue + step;
 
-      const initialValueRad = initialValue.map(MathUtils.degToRad);
+        const initialTime = curve.times[i - 1];
+        const timeSpan = curve.times[i] - initialTime;
+        const interval = timeSpan / numSubIntervals;
+        let nextTime = initialTime + interval;
 
-      const currentValue = [curvex.values[i], curvey.values[i], curvez.values[i]];
+        const interpolatedTimes = [];
+        const interpolatedValues = [];
 
-      if (isNaN(currentValue[0]) || isNaN(currentValue[1]) || isNaN(currentValue[2])) {
-        continue;
-      }
+        while (nextTime < curve.times[i]) {
+          interpolatedTimes.push(nextTime);
+          nextTime += interval;
 
-      const currentValueRad = currentValue.map(MathUtils.degToRad);
-
-      const valuesSpan = [
-        currentValue[0] - initialValue[0],
-        currentValue[1] - initialValue[1],
-        currentValue[2] - initialValue[2],
-      ];
-
-      const absoluteSpan = [Math.abs(valuesSpan[0]), Math.abs(valuesSpan[1]), Math.abs(valuesSpan[2])];
-
-      if (absoluteSpan[0] >= 180 || absoluteSpan[1] >= 180 || absoluteSpan[2] >= 180) {
-        const maxAbsSpan = Math.max(...absoluteSpan);
-
-        const numSubIntervals = maxAbsSpan / 180;
-
-        const E1 = new Euler(...initialValueRad, eulerOrder);
-        const E2 = new Euler(...currentValueRad, eulerOrder);
-
-        const Q1 = new Quaternion().setFromEuler(E1);
-        const Q2 = new Quaternion().setFromEuler(E2);
-
-        // Check unroll
-        if (Q1.dot(Q2)) {
-          Q2.set(-Q2.x, -Q2.y, -Q2.z, -Q2.w);
+          interpolatedValues.push(nextValue);
+          nextValue += step;
         }
 
-        // Interpolate
-        const initialTime = curvex.times[i - 1];
-        const timeSpan = curvex.times[i] - initialTime;
-
-        const Q = new Quaternion();
-        const E = new Euler();
-        for (let t = 0; t < 1; t += 1 / numSubIntervals) {
-          Q.copy(Q1.clone().slerp(Q2.clone(), t));
-
-          times.push(initialTime + t * timeSpan);
-          E.setFromQuaternion(Q, eulerOrder);
-
-          values.push(E.x);
-          values.push(E.y);
-          values.push(E.z);
-        }
-      } else {
-        times.push(curvex.times[i]);
-        values.push(MathUtils.degToRad(curvex.values[i]));
-        values.push(MathUtils.degToRad(curvey.values[i]));
-        values.push(MathUtils.degToRad(curvez.values[i]));
+        curve.times = inject(curve.times, i, interpolatedTimes);
+        curve.values = inject(curve.values, i, interpolatedValues);
       }
     }
-
-    return [times, values];
   }
 }
 
@@ -2945,7 +2844,11 @@ class BinaryParser {
           }
         }
 
-        const data = fflate.unzlibSync(new Uint8Array(reader.getArrayBuffer(compressedLength)));
+        if (typeof fflate === "undefined") {
+          console.error("THREE.FBXLoader: External library fflate.min.js required.");
+        }
+
+        const data = fflate.unzlibSync(new Uint8Array(reader.getArrayBuffer(compressedLength))); // eslint-disable-line no-undef
         const reader2 = new BinaryReader(data.buffer);
 
         switch (type) {
@@ -2966,8 +2869,6 @@ class BinaryParser {
             return reader2.getInt64Array(arrayLength);
         }
 
-        break; // cannot happen but is required by the DeepScan
-
       default:
         throw new Error("THREE.FBXLoader: Unknown property type " + type);
     }
@@ -2979,7 +2880,6 @@ class BinaryReader {
     this.dv = new DataView(buffer);
     this.offset = 0;
     this.littleEndian = littleEndian !== undefined ? littleEndian : true;
-    this._textDecoder = new TextDecoder();
   }
 
   getOffset() {
@@ -3140,15 +3040,17 @@ class BinaryReader {
   }
 
   getString(size) {
-    const start = this.offset;
-    let a = new Uint8Array(this.dv.buffer, start, size);
+    // note: safari 9 doesn't support Uint8Array.indexOf; create intermediate array instead
+    let a = [];
 
-    this.skip(size);
+    for (let i = 0; i < size; i++) {
+      a[i] = this.getUint8();
+    }
 
     const nullByte = a.indexOf(0);
-    if (nullByte >= 0) a = new Uint8Array(this.dv.buffer, start, nullByte);
+    if (nullByte >= 0) a = a.slice(0, nullByte);
 
-    return this._textDecoder.decode(a);
+    return LoaderUtils.decodeText(new Uint8Array(a));
   }
 }
 
@@ -3287,19 +3189,19 @@ function generateTransform(transformData) {
 
   if (transformData.preRotation) {
     const array = transformData.preRotation.map(MathUtils.degToRad);
-    array.push(transformData.eulerOrder || Euler.DEFAULT_ORDER);
+    array.push(transformData.eulerOrder);
     lPreRotationM.makeRotationFromEuler(tempEuler.fromArray(array));
   }
 
   if (transformData.rotation) {
     const array = transformData.rotation.map(MathUtils.degToRad);
-    array.push(transformData.eulerOrder || Euler.DEFAULT_ORDER);
+    array.push(transformData.eulerOrder);
     lRotationM.makeRotationFromEuler(tempEuler.fromArray(array));
   }
 
   if (transformData.postRotation) {
     const array = transformData.postRotation.map(MathUtils.degToRad);
-    array.push(transformData.eulerOrder || Euler.DEFAULT_ORDER);
+    array.push(transformData.eulerOrder);
     lPostRotationM.makeRotationFromEuler(tempEuler.fromArray(array));
     lPostRotationM.invert();
   }
@@ -3318,7 +3220,7 @@ function generateTransform(transformData) {
     lParentGX.copy(transformData.parentMatrixWorld);
   }
 
-  const lLRM = lPreRotationM.clone().multiply(lRotationM).multiply(lPostRotationM);
+  const lLRM = new Matrix4().copy(lPreRotationM).multiply(lRotationM).multiply(lPostRotationM);
   // Global Rotation
   const lParentGRM = new Matrix4();
   lParentGRM.extractRotation(lParentGX);
@@ -3327,8 +3229,9 @@ function generateTransform(transformData) {
   const lParentTM = new Matrix4();
   lParentTM.copyPosition(lParentGX);
 
-  const lParentGRSM = lParentTM.clone().invert().multiply(lParentGX);
-  const lParentGSM = lParentGRM.clone().invert().multiply(lParentGRSM);
+  const lParentGSM = new Matrix4();
+  const lParentGRSM = new Matrix4().copy(lParentTM).invert().multiply(lParentGX);
+  lParentGSM.copy(lParentGRM).invert().multiply(lParentGRSM);
   const lLSM = lScalingM;
 
   const lGlobalRS = new Matrix4();
@@ -3339,17 +3242,20 @@ function generateTransform(transformData) {
     lGlobalRS.copy(lParentGRM).multiply(lParentGSM).multiply(lLRM).multiply(lLSM);
   } else {
     const lParentLSM = new Matrix4().scale(new Vector3().setFromMatrixScale(lParentLX));
-    const lParentLSM_inv = lParentLSM.clone().invert();
-    const lParentGSM_noLocal = lParentGSM.clone().multiply(lParentLSM_inv);
+    const lParentLSM_inv = new Matrix4().copy(lParentLSM).invert();
+    const lParentGSM_noLocal = new Matrix4().copy(lParentGSM).multiply(lParentLSM_inv);
 
     lGlobalRS.copy(lParentGRM).multiply(lLRM).multiply(lParentGSM_noLocal).multiply(lLSM);
   }
 
-  const lRotationPivotM_inv = lRotationPivotM.clone().invert();
-  const lScalingPivotM_inv = lScalingPivotM.clone().invert();
+  const lRotationPivotM_inv = new Matrix4();
+  lRotationPivotM_inv.copy(lRotationPivotM).invert();
+  const lScalingPivotM_inv = new Matrix4();
+  lScalingPivotM_inv.copy(lScalingPivotM).invert();
   // Calculate the local transform matrix
-  let lTransform = lTranslationM
-    .clone()
+  let lTransform = new Matrix4();
+  lTransform
+    .copy(lTranslationM)
     .multiply(lRotationOffsetM)
     .multiply(lRotationPivotM)
     .multiply(lPreRotationM)
@@ -3363,10 +3269,10 @@ function generateTransform(transformData) {
 
   const lLocalTWithAllPivotAndOffsetInfo = new Matrix4().copyPosition(lTransform);
 
-  const lGlobalTranslation = lParentGX.clone().multiply(lLocalTWithAllPivotAndOffsetInfo);
+  const lGlobalTranslation = new Matrix4().copy(lParentGX).multiply(lLocalTWithAllPivotAndOffsetInfo);
   lGlobalT.copyPosition(lGlobalTranslation);
 
-  lTransform = lGlobalT.clone().multiply(lGlobalRS);
+  lTransform = new Matrix4().copy(lGlobalT).multiply(lGlobalRS);
 
   // from global to local
   lTransform.premultiply(lParentGX.invert());
@@ -3411,7 +3317,7 @@ function convertArrayBufferToString(buffer, from, to) {
   if (from === undefined) from = 0;
   if (to === undefined) to = buffer.byteLength;
 
-  return new TextDecoder().decode(new Uint8Array(buffer, from, to));
+  return LoaderUtils.decodeText(new Uint8Array(buffer, from, to));
 }
 
 function append(a, b) {
@@ -3426,6 +3332,11 @@ function slice(a, b, from, to) {
   }
 
   return a;
+}
+
+// inject array a2 into array a1 at index
+function inject(a1, index, a2) {
+  return a1.slice(0, index).concat(a2).concat(a1.slice(index));
 }
 
 export { FBXLoader };

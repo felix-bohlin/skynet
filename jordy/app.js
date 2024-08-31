@@ -1,6 +1,8 @@
 import * as THREE from "./three.module.js";
 import { OrbitControls } from "./OrbitControls.js";
 import { OBJLoader } from "./OBJLoader.js";
+import { MTLLoader } from "./MTLLoader.js";
+import { FBXLoader } from "./FBXLoader.js";
 import { DragControls } from "./DragControls.js"; // Ensure this is included
 
 // Scene, Camera, and Renderer
@@ -13,8 +15,100 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.appendChild(renderer.domElement);
 
+const materialsDemo = {
+  plant: {
+    leaves: new THREE.MeshStandardMaterial({
+      map: new THREE.TextureLoader().load("./objects/plants/textures/indoor plant_2_COL.jpg"),
+    }),
+    pot: new THREE.MeshStandardMaterial({
+      map: new THREE.TextureLoader().load("./objects/plants/textures/indoor plant_2_NOR.jpg"),
+    }),
+    ground: new THREE.MeshStandardMaterial({
+      map: new THREE.TextureLoader().load("./objects/plants/textures/indoor plant_2_NOR.jpg"),
+    }),
+  },
+  can: {
+    base: new THREE.MeshStandardMaterial({
+      map: new THREE.TextureLoader().load("./objects/can/CokeCan_Base_color.png"),
+    }),
+    top: new THREE.MeshStandardMaterial({ map: new THREE.TextureLoader().load("textures/can_top.jpg") }),
+  },
+  car: {
+    base: new THREE.MeshStandardMaterial({ map: new THREE.TextureLoader().load("./objects/car/car.jpg") }),
+    top: new THREE.MeshStandardMaterial({ map: new THREE.TextureLoader().load("textures/can_top.jpg") }),
+  },
+};
+
+let isRecording = false;
+let customPath = [];
+const recordingKey = "t"; // Start/stop recording
+const lockPositionKey = "a"; // Lock the current position as a keyframe
+const playAnimationKey = "0"; // Play the custom animation
+
+function startRecording() {
+  isRecording = true;
+  customPath = []; // Reset any previous recording
+  console.log("Recording started. Move the camera and press 'L' to lock positions.");
+}
+
+function stopRecording() {
+  isRecording = false;
+  console.log("Recording stopped.");
+}
+
+function lockCurrentPosition() {
+  if (isRecording) {
+    const currentPosition = camera.position.clone();
+    const currentLookAt = controls.target.clone(); // Use the target the camera is looking at
+    customPath.push({ position: currentPosition, lookAt: currentLookAt });
+    console.log("Position locked at:", currentPosition);
+  }
+}
+
+function playCustomAnimation() {
+  if (customPath.length === 0) {
+    console.log("No custom animation recorded.");
+    return;
+  }
+
+  let segmentIndex = 0;
+  const segmentTime = 2; // Time in seconds for each segment
+
+  function animateSegment(startTime) {
+    const elapsedTime = (performance.now() - startTime) / 1000;
+    const t = elapsedTime / segmentTime;
+
+    if (segmentIndex < customPath.length - 1) {
+      const startPosition = customPath[segmentIndex].position;
+      const endPosition = customPath[segmentIndex + 1].position;
+      const startLookAt = customPath[segmentIndex].lookAt;
+      const endLookAt = customPath[segmentIndex + 1].lookAt;
+
+      // Linear interpolation for position
+      camera.position.lerpVectors(startPosition, endPosition, t);
+
+      // Linear interpolation for lookAt target
+      controls.target.lerpVectors(startLookAt, endLookAt, t);
+      camera.lookAt(controls.target);
+
+      if (t >= 1) {
+        segmentIndex++;
+        if (segmentIndex < customPath.length - 1) {
+          animateSegment(performance.now()); // Move to the next segment
+        }
+      } else {
+        requestAnimationFrame(() => animateSegment(startTime));
+      }
+    }
+  }
+
+  animateSegment(performance.now());
+}
+
 const spotlightColors = [0xffe0b2, 0xff0000, 0x00ff00, 0x0000ff, 0xffff00, 0xff00ff];
-let currentColorIndex = 0;
+let currentColorIndexLeft = 0;
+let currentColorIndexMain = 0;
+let currentColorIndexRight = 0;
 
 // Orbit Controls
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -169,6 +263,7 @@ scene.add(rightSpotLightHelper);
 let model;
 let isRotating = false;
 let materialsVisible = true;
+let originalMaterials = {};
 
 // Light Helpers Toggle
 let helperState = 0; // 0: all on, 1: left only, 2: middle only, 3: right only, 4: all off
@@ -230,10 +325,6 @@ scene.add(rightLightHandle);
 const draggableLights = [mainLightHandle, leftLightHandle, rightLightHandle];
 const dragControls = new DragControls(draggableLights, camera, renderer.domElement);
 
-dragControls.addEventListener("hoveron", function (event) {
-  console.log("Hovered on:", event.object);
-});
-
 dragControls.addEventListener("dragstart", function (event) {
   controls.enabled = false; // Disable OrbitControls while dragging
 });
@@ -293,36 +384,112 @@ function placeOnFloor(object) {
     }
   });
   object.position.y -= minY;
+  if (currentObject === "car") object.position.y += 45;
+  if (currentObject === "chair") object.position.y += 45;
 }
-
 function storeOriginalMaterials(object) {
   object.traverse(function (child) {
-    if (child.isMesh && child.material) {
+    if (child.isMesh) {
       if (Array.isArray(child.material)) {
-        child.userData.originalMaterial = child.material.map((mat) => mat.clone());
-      } else if (typeof child.material.clone === "function") {
+        // If the material is an array (multi-material), clone each material in the array
+        child.userData.originalMaterial = child.material.map((mat) => {
+          return mat.clone ? mat.clone() : mat;
+        });
+      } else if (child.material && typeof child.material.clone === "function") {
+        // If the material has a clone function, clone it
         child.userData.originalMaterial = child.material.clone();
+      } else {
+        // If no clone function, just store the material reference
+        child.userData.originalMaterial = child.material;
       }
     }
   });
 }
 
-function toggleMaterials() {
+function applyHardcodedMaterials(objectName) {
   if (!model) return;
 
   model.traverse(function (child) {
     if (child.isMesh) {
-      if (materialsVisible) {
-        child.material = new THREE.MeshStandardMaterial({ color: 0x808080 });
+      if (Array.isArray(child.material)) {
+        // Loop through each material in the array
+        child.material.forEach((mat, index) => {
+          switch (objectName) {
+            case "plant":
+              if (mat.name.includes("leaves")) {
+                child.material[index] = materialsDemo.plant.leaves;
+              } else if (mat.name.includes("Pot")) {
+                child.material[index] = materialsDemo.plant.pot;
+              } else if (mat.name.includes("ground")) {
+                child.material[index] = materialsDemo.plant.ground;
+              } else if (mat.name.includes("root")) {
+                child.material[index] = materialsDemo.plant.ground;
+              }
+              break;
+            case "can":
+              if (mat.name.includes("base")) {
+                child.material[index] = materialsDemo.can.base;
+              } else if (mat.name.includes("top")) {
+                child.material[index] = materialsDemo.can.top;
+              }
+              break;
+            case "car":
+              if (mat.name.includes("TexMap")) {
+                child.material[index] = materialsDemo.car.base;
+              } else if (mat.name.includes("top")) {
+                child.material[index] = materialsDemo.car.top;
+              }
+              break;
+          }
+        });
       } else {
-        if (child.userData.originalMaterial) {
-          child.material = child.userData.originalMaterial;
+        // Handle single material cases
+        switch (objectName) {
+          case "plant":
+            if (child.material.name.includes("leaves")) {
+              child.material = materialsDemo.plant.leaves;
+            } else if (child.material.name.includes("Pot")) {
+              child.material = materialsDemo.plant.pot;
+            } else if (child.material.name.includes("ground")) {
+              child.material = materialsDemo.plant.ground;
+            }
+            break;
+          case "can":
+            if (child.material.name.includes("Material")) {
+              child.material = materialsDemo.can.base;
+            } else if (child.material.name.includes("top")) {
+              child.material = materialsDemo.can.top;
+            }
+            break;
+          case "car":
+            if (child.material.name.includes("TexMap")) {
+              child.material = materialsDemo.car.base;
+            } else if (child.material.name.includes("top")) {
+              child.material = materialsDemo.car.top;
+            }
+            break;
         }
       }
     }
   });
+}
+
+let currentObject = "plant"; // Change this based on the loaded object
+
+function toggleMaterials() {
+  if (!model) return;
 
   materialsVisible = !materialsVisible;
+
+  if (materialsVisible) {
+    applyHardcodedMaterials(currentObject);
+  } else {
+    model.traverse(function (child) {
+      if (child.isMesh && child.userData.originalMaterial) {
+        child.material = child.userData.originalMaterial;
+      }
+    });
+  }
 }
 
 function handleFileSelect(event) {
@@ -331,36 +498,188 @@ function handleFileSelect(event) {
     return;
   }
 
-  const reader = new FileReader();
-  reader.onload = function (e) {
+  const fileName = file.name.toLowerCase();
+
+  // If the file is an .obj file
+  if (fileName.endsWith(".obj")) {
+    handleOBJFile(file);
+  }
+}
+
+function handleOBJFile(file) {
+  const fileName = file.name;
+  const fileBaseName = fileName.substring(0, fileName.lastIndexOf(".")).toLowerCase();
+
+  console.log(`Handling OBJ file: ${fileName}`);
+
+  const objLoader = new OBJLoader();
+  currentObject = fileBaseName;
+
+  const objReader = new FileReader();
+  objReader.onload = function (e) {
     const contents = e.target.result;
-
-    if (model) {
-      scene.remove(model);
-    }
-
-    const objLoader = new OBJLoader();
     const object = objLoader.parse(contents);
+    console.log("OBJ file loaded.");
+    setupModel(object);
 
-    placeOnFloor(object);
-    scaleModel(object);
-    storeOriginalMaterials(object);
-
-    object.traverse(function (child) {
-      if (child.isMesh) {
-        child.castShadow = true;
-        child.receiveShadow = true;
-      }
-    });
-
-    model = object;
-    scene.add(object);
+    // Apply hardcoded materials after setting up the model
+    applyHardcodedMaterials(currentObject);
   };
+  objReader.readAsText(file);
+}
 
-  reader.readAsText(file);
+function setupModel(object) {
+  // Remove the existing model from the scene
+  if (model) {
+    scene.remove(model);
+  }
+
+  // Place the model on the floor, scale it, and store original materials
+  placeOnFloor(object);
+  scaleModel(object);
+  storeOriginalMaterials(object);
+
+  object.traverse(function (child) {
+    if (child.isMesh) {
+      child.castShadow = true;
+      child.receiveShadow = true;
+    }
+  });
+
+  model = object;
+  scene.add(object);
+
+  // Load a test texture manually
+  // const textureLoader = new THREE.TextureLoader();
+  // const testTexture = textureLoader.load(
+  //   "./objects/plants/textures/indoor plant_2_COL.jpg",
+  //   function (texture) {
+  //     console.log("Texture loaded successfully:", texture);
+  //   },
+  //   undefined,
+  //   function (err) {
+  //     console.error("Texture loading failed:", err);
+  //   }
+  // );
+
+  // // Manually apply this texture to a test material
+  // const testMaterial = new THREE.MeshStandardMaterial({ map: testTexture });
+
+  // // Apply the material to a specific mesh for testing
+  // if (model) {
+  //   model.traverse(function (child) {
+  //     if (child.isMesh) {
+  //       child.material = testMaterial; // Override with the test material
+  //     }
+  //   });
+  // }
 }
 
 document.getElementById("fileInput").addEventListener("change", handleFileSelect, false);
+
+const cameraPositions = {
+  default: { position: new THREE.Vector3(0, 150, 300), lookAt: new THREE.Vector3(0, 0, 0) },
+  interesting1: { position: new THREE.Vector3(300, 300, 300), lookAt: new THREE.Vector3(0, 150, 0) },
+  interesting2: { position: new THREE.Vector3(-300, 300, 300), lookAt: new THREE.Vector3(0, 100, 0) },
+};
+
+// Helper function to move camera to a target position
+function moveCameraTo(position, lookAt, duration = 1000) {
+  const startPos = camera.position.clone();
+  const startLookAt = controls.target.clone();
+
+  const startTime = performance.now();
+
+  function animateCamera(time) {
+    const elapsed = time - startTime;
+    const t = Math.min(elapsed / duration, 1);
+
+    // Linear interpolation between start and target positions
+    camera.position.lerpVectors(startPos, position, t);
+    controls.target.lerpVectors(startLookAt, lookAt, t);
+    camera.lookAt(controls.target);
+
+    if (t < 1) {
+      requestAnimationFrame(animateCamera);
+    }
+  }
+
+  requestAnimationFrame(animateCamera);
+}
+
+// Camera Orbit Animation
+function startOrbitAnimation(duration = 5000) {
+  const startPos = camera.position.clone();
+  const startTime = performance.now();
+
+  function animateOrbit(time) {
+    const elapsed = time - startTime;
+    const t = Math.min(elapsed / duration, 1);
+
+    // Orbit logic
+    const angle = t * Math.PI * 2; // One full orbit
+    const radius = 500;
+    camera.position.x = Math.cos(angle) * radius;
+    camera.position.z = Math.sin(angle) * radius;
+    camera.position.y = 150; // Keep camera at a fixed height
+    camera.lookAt(0, 0, 0);
+
+    if (t < 1) {
+      requestAnimationFrame(animateOrbit);
+    }
+  }
+
+  requestAnimationFrame(animateOrbit);
+}
+function animateCameraPath(path, duration = 5000) {
+  const startTime = performance.now();
+
+  function animateCamera(time) {
+    const elapsed = time - startTime;
+    const t = Math.min(elapsed / duration, 1);
+    const point = path.getPoint(t);
+
+    if (point) {
+      camera.position.copy(point);
+      camera.lookAt(0, 0, 0); // Always look at the center
+    }
+
+    if (t < 1) {
+      requestAnimationFrame(animateCamera);
+    }
+  }
+
+  requestAnimationFrame(animateCamera);
+}
+
+// Path Animation 1 (Key 7)
+function startPathAnimation1() {
+  const path = new THREE.CurvePath();
+  path.add(new THREE.LineCurve3(new THREE.Vector3(0, 50, 500), new THREE.Vector3(0, 300, -300)));
+  animateCameraPath(path, 5000);
+}
+
+// Path Animation 2 (Key 8)
+function startPathAnimation2() {
+  const path = new THREE.CurvePath();
+
+  // S-shaped path
+  path.add(new THREE.LineCurve3(new THREE.Vector3(300, 150, 300), new THREE.Vector3(-300, 150, 100)));
+  path.add(new THREE.LineCurve3(new THREE.Vector3(-300, 150, 100), new THREE.Vector3(300, 150, -100)));
+  path.add(new THREE.LineCurve3(new THREE.Vector3(300, 150, -100), new THREE.Vector3(-300, 150, -300)));
+
+  animateCameraPath(path, 7000); // 7 seconds duration
+}
+
+// Path Animation 3 (Key 9)
+function startPathAnimation3() {
+  const path = new THREE.CurvePath();
+  path.add(new THREE.LineCurve3(new THREE.Vector3(-500, 200, 200), new THREE.Vector3(0, 100, 200)));
+  path.add(new THREE.LineCurve3(new THREE.Vector3(0, 100, 200), new THREE.Vector3(500, 200, 200)));
+  path.add(new THREE.LineCurve3(new THREE.Vector3(500, 200, 200), new THREE.Vector3(0, 100, 200)));
+  path.add(new THREE.LineCurve3(new THREE.Vector3(0, 100, 200), new THREE.Vector3(-500, 200, 200)));
+  animateCameraPath(path, 8000);
+}
 
 window.addEventListener("keydown", function (event) {
   if (event.key === "r" || event.key === "R") {
@@ -368,18 +687,26 @@ window.addEventListener("keydown", function (event) {
   }
 
   if (event.key === "l" || event.key === "L") {
-    currentColorIndex = (currentColorIndex + 1) % spotlightColors.length;
+    //currentColorIndexLeft = (currentColorIndexLeft + 1) % spotlightColors.length;
 
-    if (event.shiftKey) {
-      mainSpotLight.color.setHex(spotlightColors[currentColorIndex]);
-    } else if (event.altKey) {
-      leftSpotLight.color.setHex(spotlightColors[currentColorIndex]);
-    } else if (event.ctrlKey) {
-      rightSpotLight.color.setHex(spotlightColors[currentColorIndex]);
+    if (event.shiftKey && event.altKey) {
+      currentColorIndexMain = (currentColorIndexMain + 1) % spotlightColors.length;
+
+      mainSpotLight.color.setHex(spotlightColors[currentColorIndexMain]);
+    } else if (event.altKey && !event.shiftKey) {
+      currentColorIndexLeft = (currentColorIndexLeft + 1) % spotlightColors.length;
+      leftSpotLight.color.setHex(spotlightColors[currentColorIndexLeft]);
+    } else if (!event.altKey && event.shiftKey) {
+      currentColorIndexRight = (currentColorIndexRight + 1) % spotlightColors.length;
+
+      rightSpotLight.color.setHex(spotlightColors[currentColorIndexRight]);
     } else {
-      mainSpotLight.color.setHex(spotlightColors[currentColorIndex]);
-      leftSpotLight.color.setHex(spotlightColors[currentColorIndex]);
-      rightSpotLight.color.setHex(spotlightColors[currentColorIndex]);
+      currentColorIndexMain = (currentColorIndexMain + 1) % spotlightColors.length;
+      currentColorIndexLeft = currentColorIndexMain;
+      currentColorIndexRight = currentColorIndexMain;
+      mainSpotLight.color.setHex(spotlightColors[currentColorIndexMain]);
+      leftSpotLight.color.setHex(spotlightColors[currentColorIndexMain]);
+      rightSpotLight.color.setHex(spotlightColors[currentColorIndexMain]);
     }
   }
 
@@ -398,6 +725,88 @@ window.addEventListener("keydown", function (event) {
 
   if (event.key === "b" || event.key === "B") {
     switchBackdrop(); // Toggle backdrop on B press
+  }
+
+  if (event.key === "i" || event.key === "I") {
+    if (event.shiftKey && event.altKey) mainSpotLight.intensity += 0.1;
+    else if (event.altKey && !event.shiftKey) leftSpotLight.intensity += 0.1;
+    else if (!event.altKey && event.shiftKey) rightSpotLight.intensity += 0.1;
+    else {
+      mainSpotLight.intensity += 0.1;
+      leftSpotLight.intensity += 0.1;
+      rightSpotLight.intensity += 0.1;
+    }
+  } else if (event.key === "d" || event.key === "D") {
+    if (event.shiftKey && event.altKey) mainSpotLight.intensity -= 0.1;
+    else if (event.altKey && !event.shiftKey) leftSpotLight.intensity -= 0.1;
+    else if (!event.altKey && event.shiftKey) rightSpotLight.intensity -= 0.1;
+    else {
+      mainSpotLight.intensity -= 0.1;
+      leftSpotLight.intensity -= 0.1;
+      rightSpotLight.intensity -= 0.1;
+    }
+  }
+
+  if (event.key === "p" || event.key === "P") {
+    const imgData = renderer.domElement.toDataURL("image/png");
+    const link = document.createElement("a");
+    link.href = imgData;
+    link.download = "screenshot.png";
+    link.click();
+  }
+
+  if (event.key === "c" || event.key === "C") {
+    animateCameraPath();
+  }
+
+  switch (event.key) {
+    case "1":
+      moveCameraTo(cameraPositions.default.position, cameraPositions.default.lookAt);
+      break;
+    case "2":
+      moveCameraTo(cameraPositions.interesting1.position, cameraPositions.interesting1.lookAt);
+      break;
+    case "3":
+      moveCameraTo(cameraPositions.interesting2.position, cameraPositions.interesting2.lookAt);
+      break;
+    case "4":
+      animateCameraPath(); // Use your existing camera path animation
+      break;
+    case "5":
+      startOrbitAnimation(5000); // Start an orbit animation
+      break;
+    case "6":
+      startOrbitAnimation(10000); // Start a slower orbit animation
+      break;
+    // Keep other key events as before
+  }
+
+  if (event.key === "7") {
+    startPathAnimation1();
+  }
+
+  if (event.key === "8") {
+    startPathAnimation2();
+  }
+
+  if (event.key === "9") {
+    startPathAnimation3();
+  }
+
+  if (event.key.toLowerCase() === recordingKey) {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  }
+
+  if (event.key.toLowerCase() === lockPositionKey) {
+    lockCurrentPosition();
+  }
+
+  if (event.key === playAnimationKey) {
+    playCustomAnimation();
   }
 });
 
