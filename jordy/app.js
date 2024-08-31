@@ -14,7 +14,7 @@ const camera = new THREE.PerspectiveCamera(
   2000,
 )
 camera.position.set(0, 150, 300)
-const renderer = new THREE.WebGLRenderer({ antialias: true })
+const renderer = new THREE.WebGLRenderer({preserveDrawingBuffer: true, antialias: true })
 renderer.setSize(window.innerWidth, window.innerHeight)
 renderer.shadowMap.enabled = true
 renderer.shadowMap.type = THREE.PCFSoftShadowMap
@@ -219,7 +219,7 @@ function switchBackdrop() {
   scene.remove(floor)
   scene.remove(backdrop)
   scene.remove(curvedBackdrop)
-  scene.remove(cylindricalBackdrop)
+  //scene.remove(cylindricalBackdrop)
 
   switch (currentBackdrop) {
     case 0: // Flat Backdrop
@@ -235,7 +235,7 @@ function switchBackdrop() {
       break
   }
 
-  currentBackdrop = (currentBackdrop + 1) % 3
+  currentBackdrop = (currentBackdrop + 1) % 2
 }
 
 // Initialize with the first backdrop
