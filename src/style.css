@@ -1,0 +1,30 @@
+/* the props */
+@import "https://unpkg.com/open-props";
+
+/* optional imports that use the props */
+@import "https://unpkg.com/open-props/normalize.min.css";
+@import "https://unpkg.com/open-props/buttons.min.css";
+
+#app {
+  .wrapper {
+    position: relative;
+
+    aside {
+      background-color: var(--surface-2);
+      border-radius: var(--radius-2);
+      box-shadow: var(--shadow-4);
+      align-items: start;
+      display: grid;
+      grid-template-rows: repeat(auto-fill, minmax(3ch, auto));
+      gap: var(--size-2);
+      padding: var(--size-2);
+      position: absolute;
+      left: var(--size-3);
+      top: var(--size-3);
+    }
+
+    main {
+      height: 100vh;
+    }
+  }
+}
